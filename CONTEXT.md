@@ -5,14 +5,8 @@ A personal macOS app to inspect every local git repository and prune stale workt
 ## Language
 
 **Repo**:
-A main git repository on disk (with a `.git` directory), found by scanning a Scan Root or added manually.
+A main git repository on disk (with a `.git` directory) that the user added to GitGardener from a local folder. GitGardener never discovers Repos on its own: adding a parent folder only offers the Repos inside it to tick, once; adding a Worktree folder adds its Repo. Removing a Repo only takes it off the list.
 _Avoid_: Project, workspace
-
-**Scan Root**:
-A folder searched for Repos (default: `~/sites`, `~/perso`, `~/code`).
-
-**Hidden Repo**:
-A Repo found by scanning that the user chose not to display.
 
 **Worktree**:
 An additional working directory attached to a Repo, wherever it lives on disk (e.g. a Conductor workspace). Always shown under its Repo, never as a Repo itself.
