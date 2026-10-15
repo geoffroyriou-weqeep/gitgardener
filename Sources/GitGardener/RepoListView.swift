@@ -4,6 +4,11 @@ import SwiftUI
 
 private typealias Report = BranchAnalyzer.Report
 
+private struct Pick: Hashable {
+    let repo: Repo.ID
+    let branch: String
+}
+
 private struct Filters {
     enum Location: CaseIterable {
         case localOnly, tracked, gone
@@ -48,6 +53,8 @@ struct RepoListView: View {
     @State private var isScanning = false
     @State private var errorMessage: String?
     @State private var filters = Filters()
+    @State private var picks: Set<Pick> = []
+    @State private var isPruning = false
 
     var body: some View {
         NavigationSplitView {
@@ -64,19 +71,59 @@ struct RepoListView: View {
                     if let errorMessage {
                         Text(errorMessage).foregroundStyle(.red)
                     }
-                    ForEach(visibleRepos) { RepoSection(repo: $0, reports: reports[$0.id] ?? [:], filters: filters) }
+                    ForEach(visibleRepos) { RepoSection(repo: $0, reports: reports[$0.id] ?? [:], filters: filters, picks: $picks) }
                 }
                 .padding()
             }
         }
         .toolbar {
-            Button("Actualiser", action: rescan).disabled(isScanning)
+            Button("Sélectionner toutes les sûres", action: selectSafe)
+            Button("Actualiser") { rescan() }.disabled(isScanning)
+        }
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Text("\(picks.count) sélectionnées")
+                Button("Supprimer…") { isPruning = true }.disabled(picks.isEmpty)
+            }
+            .padding(8)
+        }
+        .sheet(isPresented: $isPruning) {
+            PruneConfirmationSheet(targets: pruneTargets, onFinish: finishPrune)
         }
         .task { await scan() }
     }
 
     private var visibleRepos: [Repo] {
         selection == nil ? repos : repos.filter { $0.id == selection }
+    }
+
+    private var pruneTargets: [Pruner.Target] {
+        picks.sorted { ($0.repo.path, $0.branch) < ($1.repo.path, $1.branch) }.compactMap { pick in
+            guard let repo = repos.first(where: { $0.id == pick.repo }),
+                  let verdict = reports[pick.repo]?[pick.branch]?.verdict
+            else { return nil }
+            let branch = repo.branches.first { $0.name == pick.branch }
+            return Pruner.Target(
+                repoPath: repo.path, branch: pick.branch, worktreePath: branch?.worktreePath,
+                keepsBranch: false, isOriginOnly: branch == nil, verdict: verdict
+            )
+        }
+    }
+
+    private func selectSafe() {
+        for repo in visibleRepos {
+            for (name, report) in reports[repo.id] ?? [:] where report.verdict == .safe {
+                picks.insert(Pick(repo: repo.id, branch: name))
+            }
+        }
+    }
+
+    private func finishPrune(_ outcomes: [Pruner.Outcome]) {
+        picks = []
+        let failures = outcomes.compactMap { outcome in
+            outcome.errorMessage.map { "\(outcome.target.name) : \($0)" }
+        }
+        rescan(keeping: failures.isEmpty ? nil : failures.joined(separator: "\n"))
     }
 
     private func counters(for repo: Repo) -> String {
@@ -87,8 +134,11 @@ struct RepoListView: View {
         return ([repo.name] + counts).joined(separator: " · ")
     }
 
-    private func rescan() {
-        Task { await scan() }
+    private func rescan(keeping failures: String? = nil) {
+        Task {
+            await scan()
+            if let failures { errorMessage = failures }
+        }
     }
 
     private func scan() async {
@@ -142,6 +192,7 @@ private struct RepoSection: View {
     let repo: Repo
     let reports: [String: Report]
     let filters: Filters
+    @Binding var picks: Set<Pick>
 
     private var rows: [BranchRow] {
         repo.branches
@@ -164,7 +215,7 @@ private struct RepoSection: View {
         let rows = rows
         VStack(alignment: .leading) {
             Text(repo.name).font(.title2.bold())
-            Table(rows) {
+            Table(rows, selection: selection) {
                 TableColumn("Verdict") { Text($0.report?.verdict.label ?? "") }
                 TableColumn("Branche", value: \.branch.name)
                 TableColumn("Emplacement") { Text($0.branch.location.label) }
@@ -181,11 +232,35 @@ private struct RepoSection: View {
             if !originOnlyBranches.isEmpty {
                 DisclosureGroup("Uniquement sur origin") {
                     ForEach(originOnlyBranches, id: \.self) { name in
-                        Text("\(reports[name]?.verdict.emoji ?? "") \(name) \(mergedLabel(reports[name]))")
+                        Toggle(
+                            "\(reports[name]?.verdict.emoji ?? "") \(name) \(mergedLabel(reports[name]))",
+                            isOn: originOnlySelection(name)
+                        )
+                        .disabled(reports[name]?.verdict == .blocked)
                     }
                 }
             }
         }
+    }
+
+    /// Blocked rows can never be selected.
+    private var selection: Binding<Set<String>> {
+        Binding(
+            get: { Set(picks.filter { $0.repo == repo.id }.map(\.branch)) },
+            set: { names in
+                picks = picks.filter { $0.repo != repo.id }
+                    .union(names.filter { reports[$0]?.verdict != .blocked }.map { Pick(repo: repo.id, branch: $0) })
+            }
+        )
+    }
+
+    private func originOnlySelection(_ name: String) -> Binding<Bool> {
+        Binding(
+            get: { picks.contains(Pick(repo: repo.id, branch: name)) },
+            set: { isOn in
+                if isOn { picks.insert(Pick(repo: repo.id, branch: name)) } else { picks.remove(Pick(repo: repo.id, branch: name)) }
+            }
+        )
     }
 
     private func mergedLabel(_ report: Report?) -> String {
@@ -218,7 +293,7 @@ private struct WorktreeCell: View {
     }
 }
 
-private extension SafetyVerdict {
+extension SafetyVerdict {
     var emoji: String {
         switch self {
         case .safe: "🟢"

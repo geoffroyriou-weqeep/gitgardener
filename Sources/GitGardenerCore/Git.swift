@@ -24,26 +24,22 @@ struct Git {
         process.arguments = arguments
         process.currentDirectoryURL = currentDirectory
         let out = Pipe()
-        let err = Pipe()
+        // stderr goes to a temp file: no helper thread is needed to drain it, so callers
+        // blocking on many concurrent runs cannot starve the thread pool.
+        let errURL = FileManager.default.temporaryDirectory.appendingPathComponent("git-\(UUID().uuidString).err")
+        FileManager.default.createFile(atPath: errURL.path, contents: nil)
+        let err = try FileHandle(forWritingTo: errURL)
+        defer { try? FileManager.default.removeItem(at: errURL) }
         process.standardOutput = out
         process.standardError = err
         try process.run()
-        // Drain both pipes before waiting so a full pipe buffer cannot deadlock the child.
-        let errData = ErrBox()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global().async {
-            errData.data = err.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
+        try? err.close()
         let outData = out.fileHandleForReading.readDataToEndOfFile()
-        group.wait()
         process.waitUntilExit()
+        let errData = (try? Data(contentsOf: errURL)) ?? Data()
         guard process.terminationStatus == 0 else {
-            throw Failure(executable: executable, arguments: arguments, stderr: String(decoding: errData.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+            throw Failure(executable: executable, arguments: arguments, stderr: String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return String(decoding: outData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
-
-private final class ErrBox: @unchecked Sendable { var data = Data() }
