@@ -47,8 +47,10 @@ func drawIcon(size: CGFloat) -> NSBitmapImageRep {
     let branch = NSBezierPath()
     branch.move(to: NSPoint(x: 400, y: 380))
     branch.curve(to: NSPoint(x: 610, y: 560), controlPoint1: NSPoint(x: 400, y: 480), controlPoint2: NSPoint(x: 610, y: 450))
+    // Dashed: this is the part being cut.
     branch.lineWidth = lineWidth
     branch.lineCapStyle = .round
+    branch.setLineDash([1, 68], count: 2, phase: 0)
     branch.stroke()
 
     // Commits on the trunk.
@@ -57,7 +59,7 @@ func drawIcon(size: CGFloat) -> NSBitmapImageRep {
         NSBezierPath(ovalIn: NSRect(x: 400 - r, y: y - r, width: 2 * r, height: 2 * r)).fill(with: white)
     }
 
-    // Leaf at the branch tip: two tones split by a curved midrib, with side veins.
+    // Leaf at the branch tip: two tones split by a curved midrib.
     let transform = NSAffineTransform()
     transform.translateX(by: 600, yBy: 548)
     transform.rotate(byDegrees: -38)
@@ -83,18 +85,6 @@ func drawIcon(size: CGFloat) -> NSBitmapImageRep {
     place(half(right: true)).fill()
     NSColor(red: 0.80, green: 0.93, blue: 0.58, alpha: 1).setFill()
     place(half(right: false)).fill()
-
-    let veins = NSBezierPath()
-    for (y, reach) in [(95.0, 85.0), (155.0, 80.0), (215.0, 45.0)] {
-        veins.move(to: NSPoint(x: 8, y: y))
-        veins.curve(to: NSPoint(x: 8 + reach, y: y + 55), controlPoint1: NSPoint(x: 8 + reach * 0.4, y: y + 5), controlPoint2: NSPoint(x: 8 + reach * 0.8, y: y + 30))
-        veins.move(to: NSPoint(x: 6, y: y))
-        veins.curve(to: NSPoint(x: 6 - reach * 0.8, y: y + 50), controlPoint1: NSPoint(x: 6 - reach * 0.3, y: y + 5), controlPoint2: NSPoint(x: 6 - reach * 0.6, y: y + 28))
-    }
-    veins.lineWidth = 9
-    veins.lineCapStyle = .round
-    NSColor(red: 0.30, green: 0.52, blue: 0.20, alpha: 0.55).setStroke()
-    place(veins).stroke()
 
     let midrib = NSBezierPath()
     midrib.move(to: NSPoint(x: 0, y: -20))
