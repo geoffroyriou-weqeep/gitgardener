@@ -46,11 +46,11 @@ func drawIcon(size: CGFloat) -> NSBitmapImageRep {
     // Branch leaving the trunk and curving up to the right.
     let branch = NSBezierPath()
     branch.move(to: NSPoint(x: 400, y: 380))
-    branch.curve(to: NSPoint(x: 610, y: 560), controlPoint1: NSPoint(x: 400, y: 480), controlPoint2: NSPoint(x: 610, y: 450))
+    branch.curve(to: NSPoint(x: 560, y: 524), controlPoint1: NSPoint(x: 400, y: 470), controlPoint2: NSPoint(x: 500, y: 450))
     // Dashed: this is the part being cut.
     branch.lineWidth = lineWidth
     branch.lineCapStyle = .round
-    branch.setLineDash([1, 68], count: 2, phase: 0)
+    branch.setLineDash([1, 66], count: 2, phase: 0)
     branch.stroke()
 
     // Commits on the trunk.
