@@ -16,14 +16,18 @@ struct GitGardenerApp: App {
         WindowGroup("GitGardener") {
             RepoListView(settings: $settings)
                 .onChange(of: settings) { _, new in try? new.save() }
+                .gardenStyle()
         }
+        .defaultSize(width: 1280, height: 800)
         Window("Journal", id: "prune-log") {
-            PruneLogView()
+            PruneLogView().gardenStyle()
         }
-        SwiftUI.Settings {
-            // Saved here too: the main window may be closed while Settings is open.
-            SettingsView(settings: $settings)
-                .onChange(of: settings) { _, new in try? new.save() }
-        }
+    }
+}
+
+private extension View {
+    /// The UI is French: dates and relative times must be too, whatever the system language.
+    func gardenStyle() -> some View {
+        tint(.garden).environment(\.locale, Locale(identifier: "fr_FR"))
     }
 }

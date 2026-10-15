@@ -89,7 +89,7 @@ import Testing
         try git("checkout", "-b", "main-folder", "main", in: repo)
         try commit("mf.txt", in: repo)
 
-        return Fixture(repo: try RepoScanner(scanRoots: [root]).scan()[0], worktree: worktree, tmp: tmp)
+        return Fixture(repo: try RepoReader.read(at: repo), worktree: worktree, tmp: tmp)
     }
 
     @Test func classifiesBranchesWithSafetyVerdicts() throws {
@@ -148,7 +148,7 @@ import Testing
         try git("push", "origin", "main:refs/heads/trunk", in: fixture.repo.path)
         try git("branch", "trunk", "main", in: fixture.repo.path)
         try git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk", in: fixture.repo.path)
-        let repo = try #require(RepoScanner(scanRoots: [fixture.repo.path]).scan().first)
+        let repo = try RepoReader.read(at: fixture.repo.path)
 
         let reports = BranchAnalyzer(conductorDatabaseURL: nil, usesGitHub: false).analyze(repo)
 

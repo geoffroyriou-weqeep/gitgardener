@@ -69,6 +69,11 @@ public struct BranchAnalyzer: Sendable {
         return reports
     }
 
+    /// The Base Branches merges are checked against: the override, or the auto-detected ones that exist.
+    public func baseBranches(of repo: Repo) -> [String] {
+        MergeDetector(repoPath: repo.path, overrides: baseBranchOverrides[repo.path.path]).baseBranches
+    }
+
     /// `location` is nil for Origin Only branches.
     private func report(
         name: String, ref: String, location: Repo.BranchLocation?,
@@ -119,7 +124,7 @@ public struct BranchAnalyzer: Sendable {
         return Dictionary(grouping: pullRequests, by: \.headRefName)
     }
 
-    private static func resolveGitHubPath() -> String? {
+    static func resolveGitHubPath() -> String? {
         let fm = FileManager.default
         let candidates = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
         if let path = candidates.first(where: { fm.isExecutableFile(atPath: $0) }) { return path }

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import GitGardenerCore
 
-@Suite struct RepoScannerTests {
+@Suite struct RepoReaderTests {
     @discardableResult
     private func git(_ args: String..., in dir: URL) throws -> String {
         try Git(path: dir).run(args)
@@ -51,9 +51,7 @@ import Testing
         try git("worktree", "add", "-b", "wt-branch", wt.path, in: repo)
         try "x".write(to: wt.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
 
-        let repos = try RepoScanner(scanRoots: [root]).scan()
-        #expect(repos.count == 1)
-        let r = try #require(repos.first)
+        let r = try RepoReader.read(at: repo)
         func branch(_ n: String) -> Repo.Branch? { r.branches.first { $0.name == n } }
         #expect(branch("pushed-ahead")?.location == .tracked(ahead: 2, behind: 0))
         #expect(branch("local-only")?.location == .localOnly)
@@ -78,8 +76,19 @@ import Testing
         try git("worktree", "add", "-b", "wt-branch", wt.path, in: repo)
         try fm.removeItem(at: wt)
 
-        let repos = try RepoScanner(scanRoots: [root]).scan()
+        let r = try RepoReader.read(at: repo)
 
-        #expect(repos.first?.worktrees.map(\.dirtyFileCount) == [0])
+        #expect(r.worktrees.map(\.dirtyFileCount) == [0])
+    }
+
+    @Test func refusesAFolderWithoutItsOwnGitDirectory() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("gg-\(UUID().uuidString)").resolvingSymlinksInPath()
+        defer { try? fm.removeItem(at: tmp) }
+        let inside = tmp.appendingPathComponent("inside")
+        try fm.createDirectory(at: inside, withIntermediateDirectories: true)
+        try git("init", "-b", "main", in: tmp)
+
+        #expect(throws: RepoReader.NotARepo.self) { try RepoReader.read(at: inside) }
     }
 }

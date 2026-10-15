@@ -9,47 +9,69 @@ import Testing
         return tmp.resolvingSymlinksInPath()
     }
 
-    private func initRepo(at path: URL) throws {
-        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
-        let git = Git(path: path)
-        try git.run("init", "-b", "main")
-        try git.run("-c", "user.name=T", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "init")
-    }
-
     @Test func saveThenLoadRoundTrips() throws {
         let tmp = try makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let file = tmp.appendingPathComponent("nested/settings.json")
-        let settings = Settings(
-            scanRoots: [tmp.appendingPathComponent("a")],
-            manualRepos: [tmp.appendingPathComponent("b")],
-            hiddenRepos: [tmp.appendingPathComponent("c")],
-            baseBranchOverrides: ["/x": ["main", "develop"]]
-        )
+        let settings = Settings(repos: [tmp.appendingPathComponent("a")], baseBranchOverrides: ["/x": ["main", "develop"]])
         try settings.save(to: file)
         #expect(Settings.load(from: file) == settings)
     }
 
-    @Test func loadOfMissingFileReturnsDefaults() throws {
+    @Test func loadOfMissingFileStartsWithNoRepos() throws {
         let tmp = try makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let settings = Settings.load(from: tmp.appendingPathComponent("missing.json"))
-        #expect(settings.scanRoots == RepoScanner.defaultScanRoots)
-        #expect(settings.manualRepos.isEmpty && settings.hiddenRepos.isEmpty && settings.baseBranchOverrides.isEmpty)
+        #expect(settings.repos.isEmpty && settings.baseBranchOverrides.isEmpty)
     }
 
-    @Test func scanAddsManualAndDropsHiddenRepos() throws {
+    @Test func fileWithScanRootsLoadsWithNoReposAndKeepsBaseBranches() throws {
         let tmp = try makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
-        let root = tmp.appendingPathComponent("root")
-        let kept = root.appendingPathComponent("kept")
-        let hidden = root.appendingPathComponent("hidden")
-        let manual = tmp.appendingPathComponent("manual")
-        try [kept, hidden, manual].forEach(initRepo)
+        let file = tmp.appendingPathComponent("settings.json")
+        try """
+        {"scanRoots": ["file:///Users/x/code/"], "manualRepos": [], "hiddenRepos": [], "baseBranchOverrides": {"/x": ["develop"]}}
+        """.write(to: file, atomically: true, encoding: .utf8)
 
-        let repos = try RepoScanner(scanRoots: [root], manualRepos: [manual, kept], hiddenRepos: [hidden]).scan()
-        #expect(Set(repos.map { $0.name }) == ["kept", "manual"])
-        #expect(repos.count == 2)
+        let settings = Settings.load(from: file)
+
+        #expect(settings == Settings(repos: [], baseBranchOverrides: ["/x": ["develop"]]))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: tmp.path) == ["settings.json"])
+    }
+
+    @Test func addSkipsReposAlreadyListedThroughASymlink() throws {
+        let tmp = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let repo = tmp.appendingPathComponent("repo")
+        let link = tmp.appendingPathComponent("link")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: repo)
+        var settings = Settings()
+
+        settings.add([repo, link, repo])
+
+        #expect(settings.repos == [repo])
+    }
+
+    @Test func relocateKeepsPlaceAndBaseBranches() {
+        let old = URL(fileURLWithPath: "/tmp/gg-old")
+        let new = URL(fileURLWithPath: "/tmp/gg-new")
+        let other = URL(fileURLWithPath: "/tmp/gg-other")
+        var settings = Settings(repos: [old, other], baseBranchOverrides: [old.path: ["develop"]])
+
+        settings.relocate(old, to: new)
+
+        #expect(settings.repos.map(\.path) == [RepoLocator.canonical(new).path, other.path])
+        #expect(settings.baseBranchOverrides == [RepoLocator.canonical(new).path: ["develop"]])
+    }
+
+    @Test func removeForgetsBaseBranches() {
+        let repo = URL(fileURLWithPath: "/tmp/gg-repo")
+        var settings = Settings(repos: [repo], baseBranchOverrides: [repo.path: ["develop"]])
+
+        settings.remove(repo)
+
+        #expect(settings == Settings())
     }
 
     @Test func corruptFileIsKeptAsideNotOverwritten() throws {

@@ -88,9 +88,8 @@ public struct Pruner: Sendable {
             if try git.run("remote").split(separator: "\n").contains("origin") {
                 _ = try git.run("fetch", "--prune", "origin")
             }
-            if let repo = try RepoScanner(scanRoots: [path]).scan().first {
-                fresh[path] = (repo, analyzer.analyze(repo))
-            }
+            let repo = try RepoReader.read(at: path)
+            fresh[path] = (repo, analyzer.analyze(repo))
         }
 
         var items: [Plan.Item] = []

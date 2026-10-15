@@ -1,59 +1,18 @@
 import Foundation
 
-public struct RepoScanner: Sendable {
-    public static let defaultScanRoots: [URL] = ["sites", "perso", "code"].map {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent($0)
+/// Reads one Repo: its branches, Worktrees and Origin Only branches.
+public enum RepoReader {
+    public struct NotARepo: Error, CustomStringConvertible {
+        public let path: URL
+        public var description: String { "\(path.path) n'est plus un repo git" }
     }
 
-    private static let maxDepth = 3
-    private static let skippedDirectories: Set<String> = ["node_modules", "vendor"]
-
-    private let scanRoots: [URL]
-    private let manualRepos: [URL]
-    private let hiddenRepos: Set<URL>
-
-    public init(scanRoots: [URL] = RepoScanner.defaultScanRoots, manualRepos: [URL] = [], hiddenRepos: [URL] = []) {
-        self.scanRoots = scanRoots
-        self.manualRepos = manualRepos
-        self.hiddenRepos = Set(hiddenRepos.map(Self.canonical))
-    }
-
-    public func scan() throws -> [Repo] {
-        let manual = manualRepos.filter(isRepo)
-        var seen = Set<URL>()
-        return try (scanRoots.flatMap { findRepoPaths(in: $0, depth: 0) } + manual)
-            .filter { !hiddenRepos.contains(Self.canonical($0)) && seen.insert(Self.canonical($0)).inserted }
-            .map(readRepo)
-    }
-
-    /// The same Repo reached through a symlink must not be listed (or hidden) twice.
-    private static func canonical(_ url: URL) -> URL {
-        url.standardizedFileURL.resolvingSymlinksInPath()
-    }
-
-    private func isRepo(_ directory: URL) -> Bool {
+    public static func read(at path: URL) throws -> Repo {
+        // Without its own `.git`, git would silently read an enclosing repository (e.g. a dotfiles repo in `~`).
         var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: directory.appendingPathComponent(".git").path, isDirectory: &isDirectory)
-            && isDirectory.boolValue
-    }
-
-    private func findRepoPaths(in directory: URL, depth: Int) -> [URL] {
-        let fm = FileManager.default
-        var isDirectory: ObjCBool = false
-        if fm.fileExists(atPath: directory.appendingPathComponent(".git").path, isDirectory: &isDirectory) {
-            return isDirectory.boolValue ? [directory] : []
-        }
-        guard depth < Self.maxDepth,
-              let children = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey])
-        else { return [] }
-        return children
-            .filter { !$0.lastPathComponent.hasPrefix(".") && !Self.skippedDirectories.contains($0.lastPathComponent) }
-            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            .flatMap { findRepoPaths(in: $0, depth: depth + 1) }
-    }
-
-    private func readRepo(at path: URL) throws -> Repo {
+        guard FileManager.default.fileExists(atPath: path.appendingPathComponent(".git").path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { throw NotARepo(path: path) }
         let git = Git(path: path)
         let entries = try readWorktreeEntries(git)
         let main = entries.first
@@ -85,7 +44,7 @@ public struct RepoScanner: Sendable {
         let branch: String?
     }
 
-    private func readWorktreeEntries(_ git: Git) throws -> [WorktreeEntry] {
+    private static func readWorktreeEntries(_ git: Git) throws -> [WorktreeEntry] {
         try git.run("worktree", "list", "--porcelain")
             .components(separatedBy: "\n\n")
             .compactMap { block in
@@ -102,7 +61,7 @@ public struct RepoScanner: Sendable {
             }
     }
 
-    private func readBranches(_ git: Git, mainFolderBranch: String?, worktrees: [WorktreeEntry]) throws -> [Repo.Branch] {
+    private static func readBranches(_ git: Git, mainFolderBranch: String?, worktrees: [WorktreeEntry]) throws -> [Repo.Branch] {
         let format = "%(refname:short)%00%(upstream:short)%00%(upstream:track)%00%(committerdate:iso8601-strict)"
         let output = try git.run("for-each-ref", "--format=\(format)", "refs/heads")
         let dates = ISO8601DateFormatter()
@@ -130,7 +89,7 @@ public struct RepoScanner: Sendable {
         return Int(track[range.upperBound...].prefix { $0.isNumber }) ?? 0
     }
 
-    private func readOriginOnlyBranches(_ git: Git, localBranches: Set<String>) throws -> [String] {
+    private static func readOriginOnlyBranches(_ git: Git, localBranches: Set<String>) throws -> [String] {
         let output = try git.run("for-each-ref", "--format=%(refname:short)", "refs/remotes/origin")
         let prefix = "origin/"
         var names: [String] = []
