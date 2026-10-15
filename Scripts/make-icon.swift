@@ -21,12 +21,12 @@ func drawIcon(size: CGFloat) -> NSBitmapImageRep {
     shadow.shadowBlurRadius = 24
     NSGraphicsContext.saveGraphicsState()
     shadow.set()
-    NSColor(red: 0.12, green: 0.45, blue: 0.27, alpha: 1).setFill()
+    NSColor(red: 0.30, green: 0.50, blue: 0.20, alpha: 1).setFill()
     tilePath.fill()
     NSGraphicsContext.restoreGraphicsState()
     NSGradient(
-        starting: NSColor(red: 0.42, green: 0.80, blue: 0.50, alpha: 1),
-        ending: NSColor(red: 0.10, green: 0.44, blue: 0.27, alpha: 1)
+        starting: NSColor(red: 0.62, green: 0.80, blue: 0.38, alpha: 1),
+        ending: NSColor(red: 0.30, green: 0.52, blue: 0.22, alpha: 1)
     )!.draw(in: tilePath, angle: -90)
 
     // The leaf makes the drawing wider on the right: shift it so it sits centered.
@@ -57,30 +57,52 @@ func drawIcon(size: CGFloat) -> NSBitmapImageRep {
         NSBezierPath(ovalIn: NSRect(x: 400 - r, y: y - r, width: 2 * r, height: 2 * r)).fill(with: white)
     }
 
-    // Leaf at the branch tip, tilted up and to the right.
+    // Leaf at the branch tip: two tones split by a curved midrib, with side veins.
     let transform = NSAffineTransform()
-    transform.translateX(by: 610, yBy: 560)
-    transform.rotate(byDegrees: -40)
-    let leaf = NSBezierPath()
-    leaf.move(to: NSPoint(x: 0, y: 0))
-    leaf.curve(to: NSPoint(x: 0, y: 290), controlPoint1: NSPoint(x: 150, y: 60), controlPoint2: NSPoint(x: 130, y: 230))
-    leaf.curve(to: NSPoint(x: 0, y: 0), controlPoint1: NSPoint(x: -130, y: 230), controlPoint2: NSPoint(x: -150, y: 60))
-    leaf.close()
-    leaf.transform(using: transform as AffineTransform)
-    NSColor(red: 0.85, green: 0.98, blue: 0.80, alpha: 1).setFill()
-    leaf.fill()
-    white.setStroke()
-    leaf.lineWidth = 16
-    leaf.stroke()
+    transform.translateX(by: 600, yBy: 548)
+    transform.rotate(byDegrees: -38)
+    func place(_ path: NSBezierPath) -> NSBezierPath {
+        path.transform(using: transform as AffineTransform)
+        return path
+    }
+    let tip = NSPoint(x: 0, y: 330)
+    func half(right: Bool) -> NSBezierPath {
+        let path = NSBezierPath()
+        path.move(to: .zero)
+        if right {
+            path.curve(to: tip, controlPoint1: NSPoint(x: 190, y: 30), controlPoint2: NSPoint(x: 150, y: 260))
+            path.curve(to: .zero, controlPoint1: NSPoint(x: -8, y: 215), controlPoint2: NSPoint(x: 18, y: 100))
+        } else {
+            path.curve(to: tip, controlPoint1: NSPoint(x: -150, y: 40), controlPoint2: NSPoint(x: -130, y: 250))
+            path.curve(to: .zero, controlPoint1: NSPoint(x: -8, y: 215), controlPoint2: NSPoint(x: 18, y: 100))
+        }
+        path.close()
+        return path
+    }
+    NSColor(red: 0.96, green: 1.0, blue: 0.80, alpha: 1).setFill()
+    place(half(right: true)).fill()
+    NSColor(red: 0.80, green: 0.93, blue: 0.58, alpha: 1).setFill()
+    place(half(right: false)).fill()
 
-    let vein = NSBezierPath()
-    vein.move(to: NSPoint(x: 0, y: 20))
-    vein.curve(to: NSPoint(x: 0, y: 250), controlPoint1: NSPoint(x: 10, y: 100), controlPoint2: NSPoint(x: 10, y: 180))
-    vein.transform(using: transform as AffineTransform)
-    vein.lineWidth = 14
-    vein.lineCapStyle = .round
-    NSColor(red: 0.16, green: 0.55, blue: 0.32, alpha: 1).setStroke()
-    vein.stroke()
+    let veins = NSBezierPath()
+    for (y, reach) in [(95.0, 85.0), (155.0, 80.0), (215.0, 45.0)] {
+        veins.move(to: NSPoint(x: 8, y: y))
+        veins.curve(to: NSPoint(x: 8 + reach, y: y + 55), controlPoint1: NSPoint(x: 8 + reach * 0.4, y: y + 5), controlPoint2: NSPoint(x: 8 + reach * 0.8, y: y + 30))
+        veins.move(to: NSPoint(x: 6, y: y))
+        veins.curve(to: NSPoint(x: 6 - reach * 0.8, y: y + 50), controlPoint1: NSPoint(x: 6 - reach * 0.3, y: y + 5), controlPoint2: NSPoint(x: 6 - reach * 0.6, y: y + 28))
+    }
+    veins.lineWidth = 9
+    veins.lineCapStyle = .round
+    NSColor(red: 0.30, green: 0.52, blue: 0.20, alpha: 0.55).setStroke()
+    place(veins).stroke()
+
+    let midrib = NSBezierPath()
+    midrib.move(to: NSPoint(x: 0, y: -20))
+    midrib.curve(to: NSPoint(x: 0, y: 300), controlPoint1: NSPoint(x: 18, y: 100), controlPoint2: NSPoint(x: -8, y: 215))
+    midrib.lineWidth = 15
+    midrib.lineCapStyle = .round
+    NSColor(red: 0.30, green: 0.52, blue: 0.20, alpha: 1).setStroke()
+    place(midrib).stroke()
 
     NSGraphicsContext.restoreGraphicsState()
     return rep

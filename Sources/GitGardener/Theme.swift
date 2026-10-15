@@ -2,7 +2,7 @@ import GitGardenerCore
 import SwiftUI
 
 extension Color {
-    static let garden = Color(red: 0.22, green: 0.6, blue: 0.36)
+    static let garden = Color(red: 0.42, green: 0.64, blue: 0.27)
 }
 
 extension SafetyVerdict {
