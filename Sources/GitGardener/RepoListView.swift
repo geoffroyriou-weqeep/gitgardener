@@ -47,6 +47,7 @@ private struct Filters {
 }
 
 struct RepoListView: View {
+    @Binding var settings: GitGardenerCore.Settings
     @State private var repos: [Repo] = []
     @State private var reports: [Repo.ID: [String: Report]] = [:]
     @State private var selection: Repo.ID?
@@ -63,6 +64,7 @@ struct RepoListView: View {
                 Text("Tous les repos").tag(Repo.ID?.none)
                 ForEach(repos) { repo in
                     Text(counters(for: repo)).tag(Repo.ID?.some(repo.id))
+                        .contextMenu { Button("Masquer") { settings.hiddenRepos.append(repo.path) } }
                 }
             }
         } detail: {
@@ -92,7 +94,7 @@ struct RepoListView: View {
         .sheet(isPresented: $isPruning) {
             PruneConfirmationSheet(targets: pruneTargets, onFinish: finishPrune)
         }
-        .task { await scan() }
+        .task(id: settings) { await scan() }
         .onReceive(NotificationCenter.default.publisher(for: .branchRestored)) { _ in rescan() }
     }
 
@@ -148,11 +150,14 @@ struct RepoListView: View {
         isScanning = true
         defer { isScanning = false }
         do {
-            let scanned = try await Task.detached { try RepoScanner().scan() }.value
+            let current = settings
+            let scanned = try await Task.detached {
+                try RepoScanner(scanRoots: current.scanRoots, manualRepos: current.manualRepos, hiddenRepos: current.hiddenRepos).scan()
+            }.value
             repos = scanned
             errorMessage = nil
             reports = await Task.detached {
-                let analyzer = BranchAnalyzer()
+                let analyzer = BranchAnalyzer(baseBranchOverrides: current.baseBranchOverrides)
                 return Dictionary(uniqueKeysWithValues: scanned.map { ($0.id, analyzer.analyze($0)) })
             }.value
         } catch {

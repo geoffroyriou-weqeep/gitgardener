@@ -9,13 +9,27 @@ public struct RepoScanner: Sendable {
     private static let skippedDirectories: Set<String> = ["node_modules", "vendor"]
 
     private let scanRoots: [URL]
+    private let manualRepos: [URL]
+    private let hiddenRepos: Set<URL>
 
-    public init(scanRoots: [URL] = RepoScanner.defaultScanRoots) {
+    public init(scanRoots: [URL] = RepoScanner.defaultScanRoots, manualRepos: [URL] = [], hiddenRepos: [URL] = []) {
         self.scanRoots = scanRoots
+        self.manualRepos = manualRepos
+        self.hiddenRepos = Set(hiddenRepos.map(\.standardizedFileURL))
     }
 
     public func scan() throws -> [Repo] {
-        try scanRoots.flatMap { findRepoPaths(in: $0, depth: 0) }.map(readRepo)
+        let manual = manualRepos.filter(isRepo)
+        var seen = Set<URL>()
+        return try (scanRoots.flatMap { findRepoPaths(in: $0, depth: 0) } + manual)
+            .filter { !hiddenRepos.contains($0.standardizedFileURL) && seen.insert($0.standardizedFileURL).inserted }
+            .map(readRepo)
+    }
+
+    private func isRepo(_ directory: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: directory.appendingPathComponent(".git").path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
     }
 
     private func findRepoPaths(in directory: URL, depth: Int) -> [URL] {
