@@ -9,7 +9,7 @@ public struct Pruner: Sendable {
         public var keepsBranch: Bool
         public let isOriginOnly: Bool
         /// The verdict the user saw; `Plan` carries the fresh one.
-        public var verdict: SafetyVerdict
+        public let verdict: SafetyVerdict
 
         public init(
             repoPath: URL, branch: String?, worktreePath: URL?,
@@ -32,10 +32,13 @@ public struct Pruner: Sendable {
             let commit: String
             /// Origin's commit to delete; nil when origin is left untouched.
             let originCommit: String?
-            /// The user confirmed losing these uncommitted changes.
-            let isWorktreeDirty: Bool
+            /// `git status` of the Worktree the user confirmed losing; execution refuses any other state.
+            let worktreeChanges: String
+            /// Ignored files and folders (`.env`, `node_modules/`...) the Worktree removal deletes as well.
+            public let ignoredFiles: [String]
 
             public var deletesOnOrigin: Bool { originCommit != nil }
+            public var dirtyFileCount: Int { worktreeChanges.isEmpty ? 0 : worktreeChanges.split(separator: "\n").count }
         }
 
         public struct Skipped: Sendable {
@@ -139,13 +142,26 @@ public struct Pruner: Sendable {
                 verdict = max(verdict, .risky)
             }
         }
-        let worktree = repo.worktrees.first { Self.sameFolder($0.path, target.worktreePath) }
+        guard let status = try? Self.status(of: target.worktreePath) else { return nil }
+        // A Dirty Worktree is Risky even when it was dirtied after the fresh scan.
+        if !status.changes.isEmpty { verdict = max(verdict, .risky) }
         return Plan.Item(
             target: target,
             verdict: verdict,
             commit: commit,
             originCommit: deletesOnOrigin ? originCommit : nil,
-            isWorktreeDirty: (worktree?.dirtyFileCount ?? 0) > 0
+            worktreeChanges: status.changes,
+            ignoredFiles: status.ignored
+        )
+    }
+
+    /// No Worktree, or a folder deleted by hand: nothing left to lose.
+    private static func status(of worktree: URL?) throws -> (changes: String, ignored: [String]) {
+        guard let worktree, FileManager.default.fileExists(atPath: worktree.path) else { return ("", []) }
+        let lines = try Git(path: worktree).run("status", "--porcelain", "--ignored").split(separator: "\n")
+        return (
+            lines.filter { !$0.hasPrefix("!! ") }.joined(separator: "\n"),
+            lines.filter { $0.hasPrefix("!! ") }.map { String($0.dropFirst(3)) }
         )
     }
 
@@ -162,8 +178,10 @@ public struct Pruner: Sendable {
     /// Returns an error message, or nil on success.
     private func prune(_ item: Plan.Item) -> String? {
         let target = item.target
-        guard let branch = target.branch else { return nil }
+        guard let branch = target.branch else { return "Nothing to prune without a branch" }
         let git = Git(path: target.repoPath)
+        let deletesBranch = !target.keepsBranch && !target.isOriginOnly
+        var logged: PruneLog.Entry?
         var deletedBranch = false
         var deletedOnOrigin = false
         var failure: String?
@@ -175,14 +193,21 @@ public struct Pruner: Sendable {
                 throw Refusal(description: "\(branch) changed since the confirmation, nothing was deleted")
             }
             if let worktree = target.worktreePath {
-                let exists = FileManager.default.fileExists(atPath: worktree.path)
-                let isDirty = try exists && !Git(path: worktree).run("status", "--porcelain").isEmpty
-                guard !isDirty || item.isWorktreeDirty else {
-                    throw Refusal(description: "\(worktree.path) has new uncommitted changes since the confirmation, nothing was deleted")
+                let changes = try Self.status(of: worktree).changes
+                guard changes == item.worktreeChanges else {
+                    throw Refusal(description: "\(worktree.path) has different uncommitted changes since the confirmation, nothing was deleted")
                 }
-                try git.run(["worktree", "remove"] + (isDirty ? ["--force"] : []) + [worktree.path])
+                try git.run(["worktree", "remove"] + (changes.isEmpty ? [] : ["--force"]) + ["--", worktree.path])
             }
-            if !target.keepsBranch && !target.isOriginOnly {
+            if deletesBranch || item.deletesOnOrigin {
+                // Logged before deleting: a crash or a failed write must never leave a commit nobody can find again.
+                let entry = PruneLog.Entry(
+                    repoPath: target.repoPath.path, branch: branch, commit: item.commit, deletedOnOrigin: item.deletesOnOrigin
+                )
+                try log.append(entry)
+                logged = entry
+            }
+            if deletesBranch {
                 try git.run("branch", "-D", "--", branch)
                 deletedBranch = true
             }
@@ -195,13 +220,17 @@ public struct Pruner: Sendable {
             failure = "\(error)"
         }
 
-        if deletedBranch || deletedOnOrigin {
+        // After a partial failure the entry must say what was really deleted, or restore would push a branch still on origin.
+        if let logged, deletedBranch != deletesBranch || deletedOnOrigin != item.deletesOnOrigin {
             do {
-                try log.append(PruneLog.Entry(
-                    repoPath: target.repoPath.path, branch: branch, commit: item.commit, deletedOnOrigin: deletedOnOrigin
-                ))
+                try log.remove(logged)
+                if deletedBranch || deletedOnOrigin {
+                    try log.append(PruneLog.Entry(
+                        repoPath: logged.repoPath, branch: branch, commit: item.commit, date: logged.date, deletedOnOrigin: deletedOnOrigin
+                    ))
+                }
             } catch {
-                failure = failure ?? "Prune Log: \(error)"
+                failure = (failure ?? "") + " (Prune Log: \(error))"
             }
         }
         return failure

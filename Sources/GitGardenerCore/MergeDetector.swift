@@ -9,12 +9,17 @@ struct MergeDetector {
     private let baseRefs: [(name: String, ref: String)]
 
     var baseBranches: [String] { baseRefs.map(\.name) }
+    /// Never offered for deletion: the Base Branches plus the auto-detected ones, so an override
+    /// (or a typo in it) cannot expose `main` or origin's default branch.
+    let protectedBranches: Set<String>
 
     init(repoPath: URL, overrides: [String]?) {
         git = Git(path: repoPath)
         let git = git
         func exists(_ ref: String) -> Bool { (try? git.run("rev-parse", "--verify", "--quiet", ref)) != nil }
-        baseRefs = (overrides ?? Self.autoDetectedBaseBranches(git)).compactMap { name in
+        let autoDetected = Self.autoDetectedBaseBranches(git)
+        protectedBranches = Set(autoDetected + (overrides ?? []))
+        baseRefs = (overrides ?? autoDetected).compactMap { name in
             if exists("refs/remotes/origin/\(name)") { return (name, "refs/remotes/origin/\(name)") }
             return exists("refs/heads/\(name)") ? (name, "refs/heads/\(name)") : nil
         }

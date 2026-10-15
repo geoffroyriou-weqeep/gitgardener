@@ -60,7 +60,21 @@ import Testing
 
         #expect(try git("rev-parse", "feature", in: f.repo) == f.commit)
         #expect(exists("refs/heads/feature", in: f.origin))
+        #expect(try git("rev-parse", "--abbrev-ref", "feature@{upstream}", in: f.repo) == "origin/feature")
         #expect(try f.log.entries().isEmpty)
+    }
+
+    @Test func restoreNeverMovesABranchRecreatedOnOrigin() throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+        // Someone pushed a new "feature" at an ancestor: a plain push would fast-forward it.
+        try git("push", "origin", "main:refs/heads/feature", in: f.repo)
+        let theirs = try git("rev-parse", "main", in: f.repo)
+        let entry = try #require(f.log.entries().first)
+
+        #expect(throws: (any Error).self) { try f.log.restore(entry) }
+        #expect(try git("rev-parse", "refs/heads/feature", in: f.origin) == theirs)
+        #expect(!exists("refs/heads/feature", in: f.repo))
     }
 
     @Test func notRestorableWhenBranchExistsLocally() throws {

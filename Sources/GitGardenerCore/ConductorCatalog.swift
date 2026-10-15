@@ -20,8 +20,13 @@ struct ConductorCatalog {
     private let rows: [Row]?
 
     init(databaseURL: URL?) {
-        guard let databaseURL, FileManager.default.fileExists(atPath: databaseURL.path) else {
+        guard let databaseURL else {
             rows = []
+            return
+        }
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+            // Conductor installed but its database moved: its Workspaces cannot be told apart, so fail closed.
+            rows = FileManager.default.fileExists(atPath: "/Applications/Conductor.app") ? nil : []
             return
         }
         guard let output = try? Git.execute("/usr/bin/sqlite3", ["-readonly", "-json", databaseURL.path, Self.query]) else {

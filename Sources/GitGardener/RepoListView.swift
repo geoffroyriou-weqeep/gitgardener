@@ -94,7 +94,12 @@ struct RepoListView: View {
         .sheet(isPresented: $isPruning) {
             PruneConfirmationSheet(targets: pruneTargets, baseBranchOverrides: settings.baseBranchOverrides, onFinish: finishPrune)
         }
-        .task(id: settings) { await scan() }
+        .task(id: settings) {
+            // Typing a Base Branch override changes the settings on every keystroke: scan once typing pauses.
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            await scan()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .branchRestored)) { _ in rescan() }
     }
 
@@ -118,10 +123,12 @@ struct RepoListView: View {
         }
     }
 
-    /// Local branches only: Origin Only ones would be deleted on origin, which must stay an explicit choice.
+    /// Visible local branches only: Origin Only ones would be deleted on origin, which must stay an explicit choice,
+    /// and rows hidden by the filters must not be pruned unseen.
     private func selectSafe() {
         for repo in visibleRepos {
-            for branch in repo.branches where reports[repo.id]?[branch.name]?.verdict == .safe {
+            for branch in repo.branches where reports[repo.id]?[branch.name]?.verdict == .safe
+                && filters.matches(branch, verdict: .safe) {
                 picks.insert(Pick(repo: repo.id, branch: branch.name))
             }
         }
@@ -158,12 +165,17 @@ struct RepoListView: View {
             let scanned = try await Task.detached {
                 try RepoScanner(scanRoots: current.scanRoots, manualRepos: current.manualRepos, hiddenRepos: current.hiddenRepos).scan()
             }.value
-            repos = scanned
-            errorMessage = nil
-            reports = await Task.detached {
+            let analyzed = await Task.detached {
                 let analyzer = BranchAnalyzer(baseBranchOverrides: current.baseBranchOverrides)
                 return Dictionary(uniqueKeysWithValues: scanned.map { ($0.id, analyzer.analyze($0)) })
             }.value
+            // Rows only appear with their verdict, so a Blocked branch is never selectable, even for a moment.
+            repos = scanned
+            reports = analyzed
+            errorMessage = nil
+            picks = picks.filter { pick in
+                analyzed[pick.repo]?[pick.branch].map { $0.verdict != .blocked } ?? false
+            }
         } catch {
             errorMessage = "\(error)"
         }

@@ -13,6 +13,12 @@ struct Git {
     /// Kills a command still running after this long (a hung `fetch` or `push` would otherwise block forever).
     private static let timeout: TimeInterval = 120
 
+    private static let repositoryVariables: Set<String> = [
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    ]
+
     let path: URL
 
     @discardableResult
@@ -29,9 +35,13 @@ struct Git {
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.currentDirectoryURL = currentDirectory
+        // An inherited `GIT_DIR` or `GIT_WORK_TREE` (e.g. from a git hook) would silently redirect every command,
+        // deletions included, to another repository than the one `-C` names.
+        var environment = ProcessInfo.processInfo.environment.filter { !Self.repositoryVariables.contains($0.key) }
         // Never wait for a credential, host key or `gh` prompt nobody can answer.
-        var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
+        // A background `git status` must not take `index.lock` and make the user's own git commands fail.
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
         environment["GH_PROMPT_DISABLED"] = "1"
         process.environment = environment
         process.standardInput = FileHandle.nullDevice

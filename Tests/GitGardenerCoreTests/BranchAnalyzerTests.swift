@@ -154,4 +154,17 @@ import Testing
 
         #expect(reports["trunk"]?.verdict == .blocked)
     }
+
+    @Test func overridesNeverExposeAutoDetectedBaseBranches() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.tmp) }
+
+        let reports = BranchAnalyzer(
+            baseBranchOverrides: [fixture.repo.path.path: ["develop"]], conductorDatabaseURL: nil, usesGitHub: false
+        ).analyze(fixture.repo)
+
+        #expect(reports["main"]?.verdict == .blocked)
+        #expect(reports["develop"]?.verdict == .blocked)
+        #expect(reports["merged-main"]?.mergedInto == [])
+    }
 }

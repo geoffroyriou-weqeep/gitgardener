@@ -265,4 +265,65 @@ import Testing
         }
         #expect(exists("refs/heads/merged-local", in: f.repo))
     }
+
+    @Test func refusesDirtyWorktreeWithNewChangesSinceThePlan() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+
+        let plan = try await f.pruner.prepare(
+            [target(f, "merged-worktree", verdict: .risky, worktree: f.worktree)], alsoOnOrigin: false
+        )
+        #expect(plan.items.map(\.dirtyFileCount) == [1])
+        try "y".write(to: f.worktree.appendingPathComponent("later.txt"), atomically: true, encoding: .utf8)
+        let outcomes = await f.pruner.execute(plan)
+
+        #expect(outcomes.first?.errorMessage != nil)
+        #expect(FileManager.default.fileExists(atPath: f.worktree.appendingPathComponent("later.txt").path))
+        #expect(exists("refs/heads/merged-worktree", in: f.repo))
+    }
+
+    @Test func listsIgnoredFilesTheWorktreeRemovalDeletes() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+        let worktree = f.worktree.deletingLastPathComponent().appendingPathComponent("wt-keep")
+        let info = f.repo.appendingPathComponent(".git/info")
+        try FileManager.default.createDirectory(at: info, withIntermediateDirectories: true)
+        try ".env\n".write(to: info.appendingPathComponent("exclude"), atomically: true, encoding: .utf8)
+        try "SECRET=1".write(to: worktree.appendingPathComponent(".env"), atomically: true, encoding: .utf8)
+
+        let plan = try await f.pruner.prepare([target(f, "merged-keep", worktree: worktree)], alsoOnOrigin: false)
+
+        #expect(plan.items.map(\.verdict) == [.safe])
+        #expect(plan.items.map(\.ignoredFiles) == [[".env"]])
+    }
+
+    @Test func logsWhatWasReallyDeletedWhenOriginFails() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+
+        let plan = try await f.pruner.prepare([target(f, "merged-origin")], alsoOnOrigin: true)
+        try git("remote", "set-url", "origin", f.tmp.appendingPathComponent("missing.git").path, in: f.repo)
+        let outcomes = await f.pruner.execute(plan)
+
+        #expect(outcomes.first?.errorMessage != nil)
+        #expect(!exists("refs/heads/merged-origin", in: f.repo))
+        #expect(try f.log.entries().map(\.deletedOnOrigin) == [false])
+    }
+
+    @Test func deletesNothingWhenThePruneLogCannotBeWritten() async throws {
+        let f = try makeFixture()
+        let folder = f.tmp.resolvingSymlinksInPath().appendingPathComponent("log")
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+            try? FileManager.default.removeItem(at: f.tmp)
+        }
+
+        let plan = try await f.pruner.prepare([target(f, "merged-local")], alsoOnOrigin: false)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        let outcomes = await f.pruner.execute(plan)
+
+        #expect(outcomes.first?.errorMessage != nil)
+        #expect(exists("refs/heads/merged-local", in: f.repo))
+    }
 }

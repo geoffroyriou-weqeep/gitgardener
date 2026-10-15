@@ -87,7 +87,7 @@ public struct BranchAnalyzer: Sendable {
         let latest = pullRequests.max { $0.number < $1.number }
 
         var verdict: SafetyVerdict
-        if detector.baseBranches.contains(name) || isCheckedOutInMainFolder || conductorState == .active {
+        if detector.protectedBranches.contains(name) || isCheckedOutInMainFolder || conductorState == .active {
             verdict = .blocked
         } else if !mergedInto.isEmpty {
             verdict = .safe

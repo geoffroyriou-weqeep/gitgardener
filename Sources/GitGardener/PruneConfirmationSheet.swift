@@ -68,14 +68,14 @@ struct PruneConfirmationSheet: View {
             if !plan.changedVerdicts.isEmpty {
                 Section("Verdicts modifiés") {
                     ForEach(plan.changedVerdicts, id: \.target.id) {
-                        Text("\($0.target.name) : \($0.target.verdict.label) → \($0.verdict.label)")
+                        Text("\($0.target.name) (\($0.target.repoName)) : \($0.target.verdict.label) → \($0.verdict.label)")
                     }
                 }
             }
             if !plan.skipped.isEmpty {
                 Section("Ignorés") {
                     ForEach(plan.skipped, id: \.target.id) {
-                        Text("\($0.target.name) : \($0.reason.label)").foregroundStyle(.secondary)
+                        Text("\($0.target.name) (\($0.target.repoName)) : \($0.reason.label)").foregroundStyle(.secondary)
                     }
                 }
             }
@@ -89,19 +89,39 @@ struct PruneConfirmationSheet: View {
         if !items.isEmpty {
             Section(title) {
                 ForEach(items, id: \.target.id) { item in
-                    HStack {
-                        Text(item.target.name).foregroundStyle(color)
-                        if item.target.isOriginOnly {
-                            Text("(origin uniquement)")
-                        } else if item.deletesOnOrigin {
-                            Text("(et sur origin)").foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(item.target.name).foregroundStyle(color)
+                            Text(item.target.repoName).foregroundStyle(.secondary)
+                            if item.target.isOriginOnly {
+                                Text("(origin uniquement)")
+                            } else if item.deletesOnOrigin {
+                                Text("(et sur origin)").foregroundStyle(.red)
+                            }
+                            Spacer()
+                            if item.target.worktreePath != nil {
+                                Toggle("Garder la branche", isOn: keepsBranch(item.target)).toggleStyle(.checkbox).disabled(isRunning)
+                            }
                         }
-                        Spacer()
-                        if item.target.worktreePath != nil {
-                            Toggle("Garder la branche", isOn: keepsBranch(item.target)).toggleStyle(.checkbox).disabled(isRunning)
-                        }
+                        worktreeDetails(item)
                     }
                 }
+            }
+        }
+    }
+
+    /// What removing the Worktree folder destroys beyond the branch.
+    @ViewBuilder
+    private func worktreeDetails(_ item: Pruner.Plan.Item) -> some View {
+        if let worktree = item.target.worktreePath {
+            Text("Supprime le dossier \(worktree.path)").font(.caption).foregroundStyle(.secondary)
+            if item.dirtyFileCount > 0 {
+                Text("\(item.dirtyFileCount) fichiers non commités seront perdus").font(.caption).foregroundStyle(.red)
+            }
+            if !item.ignoredFiles.isEmpty {
+                let shown = item.ignoredFiles.prefix(5).joined(separator: ", ")
+                Text("Fichiers ignorés supprimés aussi : \(shown)\(item.ignoredFiles.count > 5 ? "…" : "")")
+                    .font(.caption).foregroundStyle(.orange)
             }
         }
     }
@@ -153,6 +173,7 @@ struct PruneConfirmationSheet: View {
 
 extension Pruner.Target {
     var name: String { branch ?? worktreePath?.lastPathComponent ?? "" }
+    var repoName: String { repoPath.lastPathComponent }
 }
 
 private extension Pruner.Plan.Skipped.Reason {
