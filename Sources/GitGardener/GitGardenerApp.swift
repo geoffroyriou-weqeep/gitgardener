@@ -21,7 +21,9 @@ struct GitGardenerApp: App {
             PruneLogView()
         }
         SwiftUI.Settings {
+            // Saved here too: the main window may be closed while Settings is open.
             SettingsView(settings: $settings)
+                .onChange(of: settings) { _, new in try? new.save() }
         }
     }
 }

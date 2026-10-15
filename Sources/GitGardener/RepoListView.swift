@@ -61,9 +61,9 @@ struct RepoListView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                Text("Tous les repos").tag(Repo.ID?.none)
+                Text(counters(name: "Tous les repos", reports: reports.values.flatMap(\.values))).tag(Repo.ID?.none)
                 ForEach(repos) { repo in
-                    Text(counters(for: repo)).tag(Repo.ID?.some(repo.id))
+                    Text(counters(name: repo.name, reports: Array((reports[repo.id] ?? [:]).values))).tag(Repo.ID?.some(repo.id))
                         .contextMenu { Button("Masquer") { settings.hiddenRepos.append(repo.path) } }
                 }
             }
@@ -92,7 +92,7 @@ struct RepoListView: View {
             .padding(8)
         }
         .sheet(isPresented: $isPruning) {
-            PruneConfirmationSheet(targets: pruneTargets, onFinish: finishPrune)
+            PruneConfirmationSheet(targets: pruneTargets, baseBranchOverrides: settings.baseBranchOverrides, onFinish: finishPrune)
         }
         .task(id: settings) { await scan() }
         .onReceive(NotificationCenter.default.publisher(for: .branchRestored)) { _ in rescan() }
@@ -107,36 +107,40 @@ struct RepoListView: View {
             guard let repo = repos.first(where: { $0.id == pick.repo }),
                   let verdict = reports[pick.repo]?[pick.branch]?.verdict
             else { return nil }
+            // Origin Only must come from the scan, never from a local branch that merely went missing.
             let branch = repo.branches.first { $0.name == pick.branch }
+            let isOriginOnly = branch == nil && repo.originOnlyBranches.contains(pick.branch)
+            guard branch != nil || isOriginOnly else { return nil }
             return Pruner.Target(
                 repoPath: repo.path, branch: pick.branch, worktreePath: branch?.worktreePath,
-                keepsBranch: false, isOriginOnly: branch == nil, verdict: verdict
+                keepsBranch: false, isOriginOnly: isOriginOnly, verdict: verdict
             )
         }
     }
 
+    /// Local branches only: Origin Only ones would be deleted on origin, which must stay an explicit choice.
     private func selectSafe() {
         for repo in visibleRepos {
-            for (name, report) in reports[repo.id] ?? [:] where report.verdict == .safe {
-                picks.insert(Pick(repo: repo.id, branch: name))
+            for branch in repo.branches where reports[repo.id]?[branch.name]?.verdict == .safe {
+                picks.insert(Pick(repo: repo.id, branch: branch.name))
             }
         }
     }
 
     private func finishPrune(_ outcomes: [Pruner.Outcome]) {
         picks = []
+        NotificationCenter.default.post(name: .branchesPruned, object: nil)
         let failures = outcomes.compactMap { outcome in
             outcome.errorMessage.map { "\(outcome.target.name) : \($0)" }
         }
         rescan(keeping: failures.isEmpty ? nil : failures.joined(separator: "\n"))
     }
 
-    private func counters(for repo: Repo) -> String {
-        let verdicts = (reports[repo.id] ?? [:]).values.map(\.verdict)
+    private func counters(name: String, reports: [Report]) -> String {
         let counts = [SafetyVerdict.safe, .review, .risky].map { verdict in
-            "\(verdict.emoji) \(verdicts.filter { $0 == verdict }.count)"
+            "\(verdict.emoji) \(reports.filter { $0.verdict == verdict }.count)"
         }
-        return ([repo.name] + counts).joined(separator: " · ")
+        return ([name] + counts).joined(separator: " · ")
     }
 
     private func rescan(keeping failures: String? = nil) {
@@ -283,6 +287,9 @@ private struct WorktreeCell: View {
 
     var body: some View {
         HStack {
+            if let worktree {
+                Text(worktree.path.lastPathComponent).help(worktree.path.path)
+            }
             if let conductor {
                 Text(conductor == .active ? "Conductor actif" : "Workspace Conductor archivé")
             }

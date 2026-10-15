@@ -51,4 +51,18 @@ import Testing
         #expect(Set(repos.map { $0.name }) == ["kept", "manual"])
         #expect(repos.count == 2)
     }
+
+    @Test func corruptFileIsKeptAsideNotOverwritten() throws {
+        let tmp = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let file = tmp.appendingPathComponent("settings.json")
+        try "{ broken".write(to: file, atomically: true, encoding: .utf8)
+
+        let settings = Settings.load(from: file)
+        try settings.save(to: file)
+
+        let backups = try FileManager.default.contentsOfDirectory(atPath: tmp.path).filter { $0.contains("corrupt") }
+        #expect(backups.count == 1)
+        #expect(try String(contentsOf: tmp.appendingPathComponent(backups[0]), encoding: .utf8) == "{ broken")
+    }
 }

@@ -15,15 +15,20 @@ public struct RepoScanner: Sendable {
     public init(scanRoots: [URL] = RepoScanner.defaultScanRoots, manualRepos: [URL] = [], hiddenRepos: [URL] = []) {
         self.scanRoots = scanRoots
         self.manualRepos = manualRepos
-        self.hiddenRepos = Set(hiddenRepos.map(\.standardizedFileURL))
+        self.hiddenRepos = Set(hiddenRepos.map(Self.canonical))
     }
 
     public func scan() throws -> [Repo] {
         let manual = manualRepos.filter(isRepo)
         var seen = Set<URL>()
         return try (scanRoots.flatMap { findRepoPaths(in: $0, depth: 0) } + manual)
-            .filter { !hiddenRepos.contains($0.standardizedFileURL) && seen.insert($0.standardizedFileURL).inserted }
+            .filter { !hiddenRepos.contains(Self.canonical($0)) && seen.insert(Self.canonical($0)).inserted }
             .map(readRepo)
+    }
+
+    /// The same Repo reached through a symlink must not be listed (or hidden) twice.
+    private static func canonical(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
     }
 
     private func isRepo(_ directory: URL) -> Bool {
@@ -55,7 +60,9 @@ public struct RepoScanner: Sendable {
         let others = Array(entries.dropFirst())
         let branches = try readBranches(git, mainFolderBranch: main?.branch, worktrees: others)
         let worktrees = try others.map { entry -> Repo.Worktree in
-            let status = try Git(path: entry.path).run("status", "--porcelain")
+            // A Worktree whose folder was deleted by hand has nothing left to lose and must not break the scan.
+            let isMissing = !FileManager.default.fileExists(atPath: entry.path.path)
+            let status = isMissing ? "" : try Git(path: entry.path).run("status", "--porcelain")
             let modified = try? entry.path.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
             return Repo.Worktree(
                 path: entry.path,

@@ -3,6 +3,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let branchRestored = Notification.Name("GitGardener.branchRestored")
+    static let branchesPruned = Notification.Name("GitGardener.branchesPruned")
 }
 
 struct PruneLogView: View {
@@ -15,6 +16,8 @@ struct PruneLogView: View {
     private let log = PruneLog()
     @State private var rows: [Row] = []
     @State private var errorMessage: String?
+    @State private var pendingRestore: PruneLog.Entry?
+    @State private var isRestoring = false
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -28,31 +31,51 @@ struct PruneLogView: View {
                 TableColumn("Date") { Text($0.entry.date, style: .date) }
                 TableColumn("Aussi sur origin") { Text($0.entry.deletedOnOrigin ? "Oui" : "Non") }
                 TableColumn("") { row in
-                    Button("Restaurer") { restore(row.entry) }.disabled(!row.isRestorable)
+                    Button("Restaurer") { pendingRestore = row.entry }.disabled(!row.isRestorable || isRestoring)
                 }
             }
         }
         .padding()
         .frame(minWidth: 700, minHeight: 300)
-        .task { reload() }
+        .task { await reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .branchesPruned)) { _ in Task { await reload() } }
+        .confirmationDialog(
+            "Restaurer \(pendingRestore?.branch ?? "") ?",
+            isPresented: Binding(get: { pendingRestore != nil }, set: { if !$0 { pendingRestore = nil } }),
+            presenting: pendingRestore
+        ) { entry in
+            Button(entry.deletedOnOrigin ? "Restaurer et repousser sur origin" : "Restaurer") {
+                Task { await restore(entry) }
+            }
+        } message: { entry in
+            Text(entry.deletedOnOrigin
+                ? "La branche sera recréée au commit \(entry.commit.prefix(7)) et repoussée sur origin."
+                : "La branche sera recréée localement au commit \(entry.commit.prefix(7)).")
+        }
     }
 
-    private func reload() {
+    private func reload() async {
+        let log = log
         do {
-            rows = try log.entries().sorted { $0.date > $1.date }.map { Row(entry: $0, isRestorable: log.isRestorable($0)) }
+            rows = try await Task.detached {
+                try log.entries().sorted { $0.date > $1.date }.map { Row(entry: $0, isRestorable: log.isRestorable($0)) }
+            }.value
         } catch {
             errorMessage = "\(error)"
         }
     }
 
-    private func restore(_ entry: PruneLog.Entry) {
+    private func restore(_ entry: PruneLog.Entry) async {
+        isRestoring = true
+        defer { isRestoring = false }
+        let log = log
         do {
-            try log.restore(entry)
+            try await Task.detached { try log.restore(entry) }.value
             errorMessage = nil
             NotificationCenter.default.post(name: .branchRestored, object: nil)
         } catch {
             errorMessage = "\(error)"
         }
-        reload()
+        await reload()
     }
 }

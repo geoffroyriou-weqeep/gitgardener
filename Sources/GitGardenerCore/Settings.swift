@@ -22,8 +22,13 @@ public struct Settings: Codable, Equatable, Sendable {
         self.baseBranchOverrides = baseBranchOverrides
     }
 
+    /// Defaults when the file is missing; an unreadable file is first moved aside so the next save cannot erase it.
     public static func load(from fileURL: URL = Settings.defaultFileURL) -> Settings {
-        (try? Data(contentsOf: fileURL)).flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } ?? Settings()
+        guard let data = try? Data(contentsOf: fileURL) else { return Settings() }
+        if let settings = try? JSONDecoder().decode(Settings.self, from: data) { return settings }
+        let backup = fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
+        try? FileManager.default.moveItem(at: fileURL, to: backup)
+        return Settings()
     }
 
     public func save(to fileURL: URL = Settings.defaultFileURL) throws {

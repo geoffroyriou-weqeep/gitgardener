@@ -129,4 +129,29 @@ import Testing
         #expect(reports["dirty-merged"]?.verdict == .blocked)
         #expect(reports["dirty-merged"]?.conductor == .active)
     }
+
+    @Test func blocksWorktreesWhenConductorDatabaseIsUnreadable() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.tmp) }
+        let database = fixture.tmp.appendingPathComponent("conductor.db")
+        try "not a database".write(to: database, atomically: true, encoding: .utf8)
+
+        let reports = BranchAnalyzer(conductorDatabaseURL: database, usesGitHub: false).analyze(fixture.repo)
+
+        #expect(reports["dirty-merged"]?.verdict == .blocked)
+        #expect(reports["merged-main"]?.verdict == .safe)
+    }
+
+    @Test func blocksOriginDefaultBranchOutsideTheDefaults() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.tmp) }
+        try git("push", "origin", "main:refs/heads/trunk", in: fixture.repo.path)
+        try git("branch", "trunk", "main", in: fixture.repo.path)
+        try git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk", in: fixture.repo.path)
+        let repo = try #require(RepoScanner(scanRoots: [fixture.repo.path]).scan().first)
+
+        let reports = BranchAnalyzer(conductorDatabaseURL: nil, usesGitHub: false).analyze(repo)
+
+        #expect(reports["trunk"]?.verdict == .blocked)
+    }
 }

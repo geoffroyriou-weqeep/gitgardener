@@ -169,4 +169,100 @@ import Testing
         #expect(entries.map(\.commit) == [commit])
         #expect(entries.map(\.deletedOnOrigin) == [true])
     }
+
+    @Test func refusesWhenBranchMovedSinceThePlan() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+
+        let plan = try await f.pruner.prepare([target(f, "merged-local")], alsoOnOrigin: false)
+        try git("checkout", "merged-local", in: f.repo)
+        try commit("late.txt", in: f.repo)
+        try git("checkout", "main", in: f.repo)
+        let outcomes = await f.pruner.execute(plan)
+
+        #expect(outcomes.first?.errorMessage != nil)
+        #expect(exists("refs/heads/merged-local", in: f.repo))
+        #expect(try f.log.entries().isEmpty)
+    }
+
+    @Test func refusesWorktreeThatBecameDirtySinceThePlan() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+        let worktree = f.worktree.deletingLastPathComponent().appendingPathComponent("wt-keep")
+
+        let plan = try await f.pruner.prepare([target(f, "merged-keep", worktree: worktree)], alsoOnOrigin: false)
+        #expect(plan.items.map(\.verdict) == [.safe])
+        try "x".write(to: worktree.appendingPathComponent("late.txt"), atomically: true, encoding: .utf8)
+        let outcomes = await f.pruner.execute(plan)
+
+        #expect(outcomes.first?.errorMessage != nil)
+        #expect(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("late.txt").path))
+        #expect(exists("refs/heads/merged-keep", in: f.repo))
+    }
+
+    @Test func leavesOriginAloneWhenItMovedSinceThePlan() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+
+        let plan = try await f.pruner.prepare([target(f, "remote-only", originOnly: true)], alsoOnOrigin: false)
+        let newer = try git("commit-tree", "origin/remote-only^{tree}", "-p", "origin/remote-only", "-m", "late", in: f.repo)
+        try git("push", "origin", "\(newer):refs/heads/remote-only", in: f.repo)
+        try git("update-ref", "refs/remotes/origin/remote-only", plan.items[0].commit, in: f.repo)
+        let outcomes = await f.pruner.execute(plan)
+
+        #expect(outcomes.first?.errorMessage != nil)
+        #expect(try git("ls-remote", "origin", "refs/heads/remote-only", in: f.repo).hasPrefix(newer))
+    }
+
+    @Test func originCopyWithUnknownCommitsIsRisky() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+        let newer = try git("commit-tree", "merged-origin^{tree}", "-p", "merged-origin", "-m", "pushed by someone else", in: f.repo)
+        try git("push", "origin", "\(newer):refs/heads/merged-origin", in: f.repo)
+
+        let plan = try await f.pruner.prepare([target(f, "merged-origin")], alsoOnOrigin: true)
+
+        #expect(plan.items.map(\.verdict) == [.risky])
+        #expect(plan.requiresTypedConfirmation)
+    }
+
+    @Test func keptBranchIsLeftOnOrigin() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+        let worktree = f.worktree.deletingLastPathComponent().appendingPathComponent("wt-keep")
+
+        let plan = try await f.pruner.prepare(
+            [target(f, "merged-keep", worktree: worktree, keepsBranch: true)], alsoOnOrigin: true
+        )
+        _ = await f.pruner.execute(plan)
+
+        #expect(plan.items.map(\.deletesOnOrigin) == [false])
+        #expect(exists("origin/merged-keep", in: f.repo))
+    }
+
+    @Test func skipsTargetsThatNoLongerMatchTheScan() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+
+        let plan = try await f.pruner.prepare(
+            [target(f, "main"), target(f, "vanished"), target(f, "merged-worktree", verdict: .risky)],
+            alsoOnOrigin: false
+        )
+
+        #expect(plan.items.isEmpty)
+        #expect(plan.skipped.map(\.reason) == [.blocked, .changed, .changed])
+    }
+
+    @Test func refusesToPruneWhenPruneLogIsUnreadable() async throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+        let file = f.tmp.resolvingSymlinksInPath().appendingPathComponent("log/prune-log.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "not json".write(to: file, atomically: true, encoding: .utf8)
+
+        await #expect(throws: (any Error).self) {
+            try await f.pruner.prepare([target(f, "merged-local")], alsoOnOrigin: false)
+        }
+        #expect(exists("refs/heads/merged-local", in: f.repo))
+    }
 }

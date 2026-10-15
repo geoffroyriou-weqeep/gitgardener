@@ -89,4 +89,15 @@ import Testing
         #expect(try f.log.entries().map(\.branch) == ["feature"])
         #expect(try f.log.entries().map(\.branch) == ["feature"])
     }
+
+    @Test func failedPushLeavesNothingHalfRestored() throws {
+        let f = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: f.tmp) }
+        try git("remote", "set-url", "origin", f.tmp.appendingPathComponent("missing.git").path, in: f.repo)
+        let entry = try #require(f.log.entries().first)
+
+        #expect(throws: (any Error).self) { try f.log.restore(entry) }
+        #expect(!exists("refs/heads/feature", in: f.repo))
+        #expect(f.log.isRestorable(entry))
+    }
 }

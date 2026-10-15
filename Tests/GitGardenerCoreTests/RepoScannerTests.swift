@@ -64,4 +64,22 @@ import Testing
         #expect(branch("wt-branch")?.worktreePath?.resolvingSymlinksInPath().path == wt.resolvingSymlinksInPath().path)
         #expect(branch("main")?.isCheckedOutInMainFolder == true)
     }
+
+    @Test func worktreeWithDeletedFolderDoesNotBreakTheScan() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("gg-\(UUID().uuidString)").resolvingSymlinksInPath()
+        defer { try? fm.removeItem(at: tmp) }
+        let root = tmp.appendingPathComponent("root")
+        let repo = root.appendingPathComponent("proj")
+        let wt = tmp.appendingPathComponent("wt")
+        try fm.createDirectory(at: repo, withIntermediateDirectories: true)
+        try git("init", "-b", "main", in: repo)
+        try commit("init", in: repo)
+        try git("worktree", "add", "-b", "wt-branch", wt.path, in: repo)
+        try fm.removeItem(at: wt)
+
+        let repos = try RepoScanner(scanRoots: [root]).scan()
+
+        #expect(repos.first?.worktrees.map(\.dirtyFileCount) == [0])
+    }
 }

@@ -50,11 +50,19 @@ public struct PruneLog: Sendable {
     }
 
     /// Recreates the branch at the logged commit (and on origin if it was deleted there), then drops the entry.
+    /// Origin goes first and without force: a failed push leaves nothing half restored, and nothing is overwritten.
     public func restore(_ entry: Entry) throws {
+        guard isRestorable(entry) else {
+            throw RestoreRefusal(description: "\(entry.branch) cannot be restored: its commit is gone or the name is taken")
+        }
         let git = Git(path: URL(fileURLWithPath: entry.repoPath))
-        try git.run("branch", entry.branch, entry.commit)
-        if entry.deletedOnOrigin { try git.run("push", "origin", entry.branch) }
+        if entry.deletedOnOrigin { try git.run("push", "origin", "\(entry.commit):refs/heads/\(entry.branch)") }
+        try git.run("branch", "--", entry.branch, entry.commit)
         try write(entries().filter { !($0.repoPath == entry.repoPath && $0.branch == entry.branch && $0.commit == entry.commit && $0.date == entry.date) })
+    }
+
+    private struct RestoreRefusal: Error, CustomStringConvertible {
+        let description: String
     }
 
     private func write(_ entries: [Entry]) throws {
