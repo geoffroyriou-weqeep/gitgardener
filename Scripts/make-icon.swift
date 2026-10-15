@@ -59,7 +59,7 @@ func drawIcon(size: CGFloat) -> NSBitmapImageRep {
         NSBezierPath(ovalIn: NSRect(x: 400 - r, y: y - r, width: 2 * r, height: 2 * r)).fill(with: white)
     }
 
-    // Leaf at the branch tip: two tones split by a curved midrib.
+    // Leaf at the branch tip: two tones split along the middle.
     let transform = NSAffineTransform()
     transform.translateX(by: 600, yBy: 548)
     transform.rotate(byDegrees: -38)
@@ -85,14 +85,6 @@ func drawIcon(size: CGFloat) -> NSBitmapImageRep {
     place(half(right: true)).fill()
     NSColor(red: 0.80, green: 0.93, blue: 0.58, alpha: 1).setFill()
     place(half(right: false)).fill()
-
-    let midrib = NSBezierPath()
-    midrib.move(to: NSPoint(x: 0, y: -20))
-    midrib.curve(to: NSPoint(x: 0, y: 300), controlPoint1: NSPoint(x: 18, y: 100), controlPoint2: NSPoint(x: -8, y: 215))
-    midrib.lineWidth = 15
-    midrib.lineCapStyle = .round
-    NSColor(red: 0.30, green: 0.52, blue: 0.20, alpha: 1).setStroke()
-    place(midrib).stroke()
 
     NSGraphicsContext.restoreGraphicsState()
     return rep
