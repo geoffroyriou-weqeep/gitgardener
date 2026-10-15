@@ -55,6 +55,7 @@ struct RepoListView: View {
     @State private var filters = Filters()
     @State private var picks: Set<Pick> = []
     @State private var isPruning = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -78,6 +79,7 @@ struct RepoListView: View {
         }
         .toolbar {
             Button("Sélectionner toutes les sûres", action: selectSafe)
+            Button("Journal") { openWindow(id: "prune-log") }
             Button("Actualiser") { rescan() }.disabled(isScanning)
         }
         .safeAreaInset(edge: .bottom) {
@@ -91,6 +93,7 @@ struct RepoListView: View {
             PruneConfirmationSheet(targets: pruneTargets, onFinish: finishPrune)
         }
         .task { await scan() }
+        .onReceive(NotificationCenter.default.publisher(for: .branchRestored)) { _ in rescan() }
     }
 
     private var visibleRepos: [Repo] {

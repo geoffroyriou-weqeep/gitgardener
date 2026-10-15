@@ -13,5 +13,8 @@ struct GitGardenerApp: App {
         WindowGroup("GitGardener") {
             RepoListView()
         }
+        Window("Journal", id: "prune-log") {
+            PruneLogView()
+        }
     }
 }
