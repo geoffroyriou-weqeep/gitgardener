@@ -188,7 +188,7 @@ public struct Pruner: Sendable {
         do {
             // Nothing is deleted if the branch moved since the user confirmed.
             let ref = target.isOriginOnly ? "refs/remotes/origin/\(branch)" : "refs/heads/\(branch)"
-            guard (try? git.run("rev-parse", "--verify", "--quiet", ref)) == item.commit else {
+            guard try git.run("rev-parse", "--verify", "--quiet", ref) == item.commit else {
                 throw Refusal(description: "\(branch) changed since the confirmation, nothing was deleted")
             }
             if let worktree = target.worktreePath {

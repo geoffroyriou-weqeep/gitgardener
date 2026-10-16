@@ -19,6 +19,9 @@ struct Git {
         "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
     ]
 
+    /// Concurrent spawns race on file descriptors (a closed pipe end gets reused by another launch): one at a time.
+    private static let spawnLock = NSLock()
+
     let path: URL
 
     @discardableResult
@@ -54,8 +57,10 @@ struct Git {
         defer { try? FileManager.default.removeItem(at: errURL) }
         process.standardOutput = out
         process.standardError = err
-        try process.run()
-        try? err.close()
+        try spawnLock.withLock {
+            try process.run()
+            try? err.close()
+        }
         let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
         defer { watchdog.cancel() }
