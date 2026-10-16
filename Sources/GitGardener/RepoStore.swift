@@ -29,6 +29,12 @@ final class RepoStore {
         let baseBranches: [String]
     }
 
+    /// What an analysis reports before it is done: the Repo as soon as it is read, then each verdict as it is found.
+    private enum Progress: Sendable {
+        case repo(Repo)
+        case report(String, BranchAnalyzer.Report)
+    }
+
     private enum Outcome: Sendable {
         case loaded(Loaded)
         case missing
@@ -73,7 +79,14 @@ final class RepoStore {
             var pending = started[...]
             func startNext() {
                 guard let (path, generation) = pending.popFirst() else { return }
-                group.addTask { (path, generation, Self.load(path, analyzer: analyzer)) }
+                group.addTask {
+                    let outcome = Self.load(path, analyzer: analyzer) { progress in
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated { self.apply(progress, to: path, generation: generation) }
+                        }
+                    }
+                    return (path, generation, outcome)
+                }
             }
             for _ in 0..<Self.maxConcurrentAnalyses { startNext() }
             for await (path, generation, outcome) in group {
@@ -89,6 +102,16 @@ final class RepoStore {
         entries[path] = nil
         generations[path] = (generations[path] ?? 0) + 1
         picks = picks.filter { $0.repo != path }
+    }
+
+    /// Rows show up with their branch data first and get their verdict one by one.
+    private func apply(_ progress: Progress, to path: URL, generation: Int) {
+        guard generations[path] == generation, var entry = entries[path], entry.isLoading else { return }
+        switch progress {
+        case let .repo(repo): entry.repo = repo
+        case let .report(name, report): entry.reports[name] = report
+        }
+        entries[path] = entry
     }
 
     private func apply(_ outcome: Outcome, to path: URL, generation: Int) {
@@ -112,11 +135,15 @@ final class RepoStore {
         }
     }
 
-    private nonisolated static func load(_ path: URL, analyzer: BranchAnalyzer) -> Outcome {
+    private nonisolated static func load(
+        _ path: URL, analyzer: BranchAnalyzer, onProgress: @escaping @Sendable (Progress) -> Void
+    ) -> Outcome {
         guard FileManager.default.fileExists(atPath: path.path) else { return .missing }
         do {
             let repo = try RepoReader.read(at: path)
-            return .loaded(Loaded(repo: repo, reports: analyzer.analyze(repo), baseBranches: analyzer.baseBranches(of: repo)))
+            onProgress(.repo(repo))
+            let reports = analyzer.analyze(repo) { name, report in onProgress(.report(name, report)) }
+            return .loaded(Loaded(repo: repo, reports: reports, baseBranches: analyzer.baseBranches(of: repo)))
         } catch {
             return .failed("\(error)")
         }

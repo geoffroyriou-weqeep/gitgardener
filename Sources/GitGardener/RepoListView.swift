@@ -184,7 +184,8 @@ struct RepoListView: View {
             ),
             onRetry: { analyze([path]) },
             onLocate: { locate(path) },
-            onRemove: { remove(path) }
+            onRemove: { remove(path) },
+            onPrune: { isPruning = true }
         )
     }
 

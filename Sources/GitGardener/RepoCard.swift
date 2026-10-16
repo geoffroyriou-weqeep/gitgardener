@@ -14,6 +14,7 @@ struct RepoCard: View {
     let onRetry: () -> Void
     let onLocate: () -> Void
     let onRemove: () -> Void
+    let onPrune: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -73,7 +74,7 @@ struct RepoCard: View {
             }
         case nil:
             if let repo = entry.repo {
-                BranchTable(repo: repo, reports: entry.reports, filters: filters, picks: $picks)
+                BranchTable(repo: repo, reports: entry.reports, filters: filters, picks: $picks, onPrune: onPrune)
             } else {
                 ProgressView("Analyse…").controlSize(.small).frame(maxWidth: .infinity)
             }
@@ -107,6 +108,8 @@ private struct BranchRow: Identifiable {
     let report: Report?
     let worktree: Repo.Worktree?
     var id: String { branch.name }
+    /// Blocked rows can never be selected, and a row is not selectable before its verdict is known.
+    var isSelectable: Bool { report.map { $0.verdict != .blocked } ?? false }
 }
 
 private struct BranchTable: View {
@@ -114,6 +117,7 @@ private struct BranchTable: View {
     let reports: [String: Report]
     let filters: Filters
     @Binding var picks: Set<Pick>
+    let onPrune: () -> Void
 
     var body: some View {
         let visible = VisibleBranches(repo: repo, reports: reports, filters: filters)
@@ -135,10 +139,25 @@ private struct BranchTable: View {
 
     private func table(_ rows: [BranchRow]) -> some View {
         Table(rows, selection: selection) {
-            TableColumn("Verdict") { row in
-                if let verdict = row.report?.verdict { VerdictTag(verdict: verdict) }
+            TableColumn("") { row in
+                if row.isSelectable {
+                    Toggle("", isOn: pickBinding(row.id)).toggleStyle(.checkbox).labelsHidden()
+                }
             }
-            .width(min: 84, ideal: 96, max: 110)
+            .width(24)
+            TableColumn("Verdict") { row in
+                if let report = row.report {
+                    HStack(spacing: 6) {
+                        VerdictTag(verdict: report.verdict, reason: report.blockReasonText)
+                        if let reason = report.blockReasonText {
+                            Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(reason)
+                        }
+                    }
+                } else {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+            .width(min: 84, ideal: 250, max: 320)
             TableColumn("Branche") { Text($0.branch.name).fontDesign(.monospaced).help($0.branch.name) }
                 .width(min: 120, ideal: 210)
             TableColumn("Emplacement") { LocationLabel(location: $0.branch.location) }
@@ -162,8 +181,51 @@ private struct BranchTable: View {
             TableColumn("Worktree") { WorktreeCell(worktree: $0.worktree, conductor: $0.report?.conductor) }
                 .width(min: 80, ideal: 170)
         }
+        .contextMenu(forSelectionType: String.self) { names in
+            contextMenu(for: names.compactMap { name in rows.first { $0.id == name } })
+        }
         .scrollDisabled(true)
         .frame(height: CGFloat(rows.count + 1) * 28 + 6)
+    }
+
+    @ViewBuilder
+    private func contextMenu(for rows: [BranchRow]) -> some View {
+        if let row = rows.first, rows.count == 1 {
+            Button("Copier le nom de la branche") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(row.branch.name, forType: .string)
+            }
+            if let pr = row.report?.pullRequest {
+                Button("Ouvrir la PR #\(pr.number)") { NSWorkspace.shared.open(pr.url) }
+            }
+            if let worktree = row.worktree {
+                Divider()
+                Button("Afficher le worktree dans le Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([worktree.path])
+                }
+                Button("Ouvrir le worktree dans le Terminal") { openInTerminal(worktree.path) }
+            }
+        }
+        let prunable = rows.filter(\.isSelectable)
+        if !prunable.isEmpty {
+            Divider()
+            let allPicked = prunable.allSatisfy { picks.contains(Pick(repo: repo.id, branch: $0.id)) }
+            Button(allPicked ? "Retirer de la sélection" : "Sélectionner pour la taille") {
+                for row in prunable {
+                    let pick = Pick(repo: repo.id, branch: row.id)
+                    if allPicked { picks.remove(pick) } else { picks.insert(pick) }
+                }
+            }
+            Button("Supprimer…", role: .destructive) {
+                picks = Set(prunable.map { Pick(repo: repo.id, branch: $0.id) })
+                onPrune()
+            }
+        }
+    }
+
+    private func openInTerminal(_ url: URL) {
+        guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
+        NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
     }
 
     private func originOnlyList(_ names: [String]) -> some View {
@@ -172,7 +234,10 @@ private struct BranchTable: View {
                 ForEach(names, id: \.self) { name in
                     Toggle(isOn: originOnlySelection(name)) {
                         HStack {
-                            if let verdict = reports[name]?.verdict { VerdictTag(verdict: verdict) }
+                            if let report = reports[name] {
+                                VerdictTag(verdict: report.verdict, reason: report.blockReasonText)
+                                if let reason = report.blockReasonText { Text(reason).font(.caption).foregroundStyle(.secondary) }
+                            }
                             Text(name).fontDesign(.monospaced)
                             if let merged = reports[name]?.mergedInto, !merged.isEmpty {
                                 Text("mergée dans \(merged.joined(separator: ", "))").foregroundStyle(.secondary)
@@ -180,7 +245,7 @@ private struct BranchTable: View {
                         }
                     }
                     .toggleStyle(.checkbox)
-                    .disabled(reports[name]?.verdict == .blocked)
+                    .disabled(reports[name].map { $0.verdict == .blocked } ?? true)
                 }
             }
             .padding(.top, 4)
@@ -189,16 +254,18 @@ private struct BranchTable: View {
         }
     }
 
-    /// Blocked rows can never be selected.
+    /// Blocked rows and rows still being analyzed can never be selected.
     private var selection: Binding<Set<String>> {
         Binding(
             get: { Set(picks.filter { $0.repo == repo.id }.map(\.branch)) },
             set: { names in
                 picks = picks.filter { $0.repo != repo.id }
-                    .union(names.filter { reports[$0]?.verdict != .blocked }.map { Pick(repo: repo.id, branch: $0) })
+                    .union(names.filter { reports[$0].map { $0.verdict != .blocked } ?? false }.map { Pick(repo: repo.id, branch: $0) })
             }
         )
     }
+
+    private func pickBinding(_ name: String) -> Binding<Bool> { originOnlySelection(name) }
 
     private func originOnlySelection(_ name: String) -> Binding<Bool> {
         Binding(

@@ -43,6 +43,23 @@ extension SafetyVerdict {
     }
 }
 
+extension BranchAnalyzer.BlockReason {
+    var label: String {
+        switch self {
+        case .protectedBranch: "branche protégée"
+        case .checkedOutInMainFolder: "extraite dans le dossier principal"
+        case .activeConductorWorkspace: "workspace Conductor actif"
+        }
+    }
+}
+
+extension BranchAnalyzer.Report {
+    /// The reasons a Blocked branch is blocked, nil for any other verdict.
+    var blockReasonText: String? {
+        blockReasons.isEmpty ? nil : blockReasons.map(\.label).joined(separator: ", ")
+    }
+}
+
 /// A small tinted capsule, the building block of every badge.
 struct Tag: View {
     let text: String
@@ -65,9 +82,11 @@ struct Tag: View {
 
 struct VerdictTag: View {
     let verdict: SafetyVerdict
+    var reason: String?
 
     var body: some View {
         Tag(text: verdict.label, symbol: verdict.symbol, color: verdict.color)
+            .help(reason ?? "")
     }
 }
 
