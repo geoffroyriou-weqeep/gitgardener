@@ -35,32 +35,81 @@ struct PruneConfirmationSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Supprimer \(plan?.items.count ?? targets.count) éléments").font(.title2.bold())
-            if let plan {
-                list(plan)
-            } else if errorMessage == nil {
-                ProgressView("Analyse en cours…")
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 16)
+            content
+                .padding(.horizontal, 24)
+            Divider().padding(.top, 16)
+            footer
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
+        }
+        .frame(minWidth: 580, minHeight: 440)
+        .interactiveDismissDisabled(isRunning)
+        .task(id: options) { await load() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "trash.circle.fill")
+                .font(.system(size: 34))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Supprimer \(plan?.items.count ?? targets.count) éléments").font(.title2.bold())
+                Text("Vérifiez la sélection avant de confirmer.").font(.subheadline).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Group {
+                if let plan {
+                    list(plan)
+                } else if errorMessage == nil {
+                    ProgressView("Analyse en cours…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
             if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red)
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
             }
             Toggle("Supprimer aussi sur origin", isOn: $options.alsoOnOrigin).disabled(isRunning)
             if plan?.requiresTypedConfirmation == true {
-                Text("Cette suppression contient des éléments risqués ou touche origin.").foregroundStyle(.red)
-                TextField("Tapez « supprimer » pour confirmer", text: $typedConfirmation).disabled(isRunning)
-            }
-            HStack {
-                Button("Annuler") { dismiss() }.disabled(isRunning)
-                Spacer()
-                if isRunning { ProgressView().controlSize(.small) }
-                Button("Supprimer", role: .destructive, action: confirm).disabled(!canConfirm)
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Cette suppression contient des éléments risqués ou touche origin.", systemImage: "exclamationmark.octagon.fill")
+                        .foregroundStyle(.red)
+                    TextField("Tapez « supprimer » pour confirmer", text: $typedConfirmation)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(isRunning)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
             }
         }
-        .padding()
-        .frame(minWidth: 520, minHeight: 360)
-        .interactiveDismissDisabled(isRunning)
-        .task(id: options) { await load() }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Button("Annuler") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isRunning)
+            Spacer()
+            if isRunning { ProgressView().controlSize(.small) }
+            Button("Supprimer", role: .destructive, action: confirm)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canConfirm)
+        }
+        .controlSize(.large)
     }
 
     private func list(_ plan: Pruner.Plan) -> some View {
@@ -82,6 +131,8 @@ struct PruneConfirmationSheet: View {
             section("Risquées", plan.items.filter { $0.verdict == .risky }, color: .red)
             section("Sélection", plan.items.filter { $0.verdict != .risky }, color: .primary)
         }
+        .scrollContentBackground(.hidden)
+        .listStyle(.inset)
     }
 
     @ViewBuilder
@@ -89,8 +140,8 @@ struct PruneConfirmationSheet: View {
         if !items.isEmpty {
             Section(title) {
                 ForEach(items, id: \.target.id) { item in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
                             Text(item.target.name).foregroundStyle(color)
                             Text(item.target.repoName).foregroundStyle(.secondary)
                             if item.target.isOriginOnly {
@@ -105,6 +156,7 @@ struct PruneConfirmationSheet: View {
                         }
                         worktreeDetails(item)
                     }
+                    .padding(.vertical, 4)
                 }
             }
         }
