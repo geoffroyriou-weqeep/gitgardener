@@ -19,9 +19,6 @@ struct Git {
         "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
     ]
 
-    /// Concurrent spawns race on file descriptors (a closed pipe end gets reused by another launch): one at a time.
-    private static let spawnLock = NSLock()
-
     let path: URL
 
     @discardableResult
@@ -57,14 +54,15 @@ struct Git {
         defer { try? FileManager.default.removeItem(at: errURL) }
         process.standardOutput = out
         process.standardError = err
-        try spawnLock.withLock {
-            try process.run()
-            try? err.close()
-        }
-        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        try process.run()
+        try? err.close()
+        // Weak: a cancelled work item stays queued until its deadline, and would keep the Process and its pipe
+        // open that long. A Finder-launched app gets 256 descriptors: a scan would exhaust them ("Bad file descriptor").
+        let watchdog = DispatchWorkItem { [weak process] in if process?.isRunning == true { process?.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
         defer { watchdog.cancel() }
         let outData = out.fileHandleForReading.readDataToEndOfFile()
+        try? out.fileHandleForReading.close()
         process.waitUntilExit()
         let errData = (try? Data(contentsOf: errURL)) ?? Data()
         guard process.terminationStatus == 0, process.terminationReason == .exit else {
